@@ -8,7 +8,7 @@ Usage:
 Examples:
     python3 mac_uninstaller.py Motrix
     python3 mac_uninstaller.py Motrix --bundle-id app.motrix.native
-    python3 mac_uninstaller.py Motrix --dry-run
+    python3 mac_uninstaller.py Firefox --bundle-id org.mozilla.firefox --dry-run
 """
 
 from __future__ import annotations
@@ -21,22 +21,61 @@ import sys
 from pathlib import Path
 
 
+HOME = Path.home()
+
+# All locations macOS apps can leave files
 SEARCH_ROOTS = [
     Path("/Applications"),
-    Path.home() / "Applications",
-    Path.home() / "Library",
-    Path("/Library"),
+    HOME / "Applications",
+    HOME / "Library" / "Application Support",
+    HOME / "Library" / "Caches",
+    HOME / "Library" / "Preferences",
+    HOME / "Library" / "Logs",
+    HOME / "Library" / "Cookies",
+    HOME / "Library" / "WebKit",
+    HOME / "Library" / "HTTPStorages",
+    HOME / "Library" / "Saved Application State",
+    HOME / "Library" / "Containers",
+    HOME / "Library" / "Group Containers",
+    HOME / "Library" / "LaunchAgents",
+    Path("/Library") / "LaunchAgents",
+    Path("/Library") / "LaunchDaemons",
+    Path("/Library") / "Application Support",
+    Path("/Library") / "Preferences",
     Path("/private/var/folders"),
 ]
 
+# Paths that are never touched (user data, other apps' internals)
 SKIP_PATHS = [
-    Path.home() / "Downloads",
-    Path.home() / "Documents",
-    Path.home() / "Desktop",
-    Path.home() / "Movies",
-    Path.home() / "Music",
-    Path.home() / "Pictures",
+    HOME / "Downloads",
+    HOME / "Documents",
+    HOME / "Desktop",
+    HOME / "Movies",
+    HOME / "Music",
+    HOME / "Pictures",
 ]
+
+
+def is_inside_other_app(path: Path) -> bool:
+    """Return True if path lives inside another .app bundle that is not the target app."""
+    parts = path.parts
+    for i, part in enumerate(parts):
+        if part.endswith(".app"):
+            app_path = Path(*parts[: i + 1])
+            # If this .app is not at the root of /Applications or ~/Applications, skip
+            parent = app_path.parent
+            if parent in (Path("/Applications"), HOME / "Applications"):
+                return False  # top-level app — could be the target
+            return True  # nested inside another app (e.g. VS Code, Ghostty)
+    return False
+
+
+def is_system_temp_artifact(path: Path) -> bool:
+    """Skip Safari/system import temp dirs that aren't the app's own data."""
+    skip_containers = [
+        HOME / "Library" / "Containers" / "com.apple.Safari.BrowserDataImportingService",
+    ]
+    return any(str(path).startswith(str(s)) for s in skip_containers)
 
 
 def find_with_fd(keyword: str) -> list[Path]:
@@ -53,6 +92,10 @@ def find_with_fd(keyword: str) -> list[Path]:
             for line in out.stdout.splitlines():
                 p = Path(line.strip())
                 if any(str(p).startswith(str(skip)) for skip in SKIP_PATHS):
+                    continue
+                if is_inside_other_app(p):
+                    continue
+                if is_system_temp_artifact(p):
                     continue
                 results.append(p)
         except FileNotFoundError:
@@ -79,7 +122,7 @@ def remove(path: Path) -> tuple[bool, str]:
             path.unlink()
         return True, ""
     except PermissionError:
-        return False, "Permission denied"
+        return False, "Permission denied (try sudo)"
     except Exception as e:
         return False, str(e)
 
@@ -136,7 +179,7 @@ def main() -> None:
 
     print()
     if failed:
-        print(f"Done with {len(failed)} error(s). You may need sudo for system-level files.")
+        print(f"Done with {len(failed)} error(s).")
     else:
         print("Done. App fully removed.")
 
