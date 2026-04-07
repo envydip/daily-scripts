@@ -56,17 +56,14 @@ SKIP_PATHS = [
 ]
 
 
-def is_inside_other_app(path: Path) -> bool:
-    """Return True if path lives inside another .app bundle that is not the target app."""
-    parts = path.parts
-    for i, part in enumerate(parts):
+def is_inside_other_app(path: Path, keywords: list[str]) -> bool:
+    """Return True if path lives inside a .app bundle that doesn't match any keyword."""
+    for part in path.parts:
         if part.endswith(".app"):
-            app_path = Path(*parts[: i + 1])
-            # If this .app is not at the root of /Applications or ~/Applications, skip
-            parent = app_path.parent
-            if parent in (Path("/Applications"), HOME / "Applications"):
-                return False  # top-level app — could be the target
-            return True  # nested inside another app (e.g. VS Code, Ghostty)
+            app_stem = part[:-4].lower()
+            if any(kw.lower() in app_stem for kw in keywords):
+                return False  # this .app is the target
+            return True  # inside a different app (e.g. VS Code, Ghostty)
     return False
 
 
@@ -78,7 +75,7 @@ def is_system_temp_artifact(path: Path) -> bool:
     return any(str(path).startswith(str(s)) for s in skip_containers)
 
 
-def find_with_fd(keyword: str) -> list[Path]:
+def find_with_fd(keyword: str, all_keywords: list[str]) -> list[Path]:
     results: list[Path] = []
     for root in SEARCH_ROOTS:
         if not root.exists():
@@ -93,7 +90,7 @@ def find_with_fd(keyword: str) -> list[Path]:
                 p = Path(line.strip())
                 if any(str(p).startswith(str(skip)) for skip in SKIP_PATHS):
                     continue
-                if is_inside_other_app(p):
+                if is_inside_other_app(p, all_keywords):
                     continue
                 if is_system_temp_artifact(p):
                     continue
@@ -142,7 +139,7 @@ def main() -> None:
 
     found: list[Path] = []
     for kw in keywords:
-        found.extend(find_with_fd(kw))
+        found.extend(find_with_fd(kw, keywords))
 
     found = deduplicate(found)
 
