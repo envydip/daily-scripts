@@ -85,11 +85,21 @@ def detect_bundle_id(app_name: str) -> str | None:
 
 
 def is_system_temp_artifact(path: Path) -> bool:
-    """Skip Safari/system import temp dirs that aren't the app's own data."""
+    """Skip Safari/system import temp dirs and browser website storage."""
     skip_containers = [
         HOME / "Library" / "Containers" / "com.apple.Safari.BrowserDataImportingService",
     ]
-    return any(str(path).startswith(str(s)) for s in skip_containers)
+    if any(str(path).startswith(str(s)) for s in skip_containers):
+        return True
+    # Skip browser profile website storage (e.g. Firefox storage/default/https+++example.com)
+    # These are cached website data from visiting a URL, not app files
+    parts = path.parts
+    for i, part in enumerate(parts):
+        if part == "storage" and i + 1 < len(parts) and parts[i + 1] == "default":
+            next_part = parts[i + 2] if i + 2 < len(parts) else ""
+            if next_part.startswith("https+++") or next_part.startswith("http+++"):
+                return True
+    return False
 
 
 def find_with_fd(keyword: str, all_keywords: list[str]) -> list[Path]:
