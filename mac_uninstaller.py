@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""
+mac_uninstaller.py — Clean uninstaller for macOS apps.
+
+Usage:
+    python3 mac_uninstaller.py <AppName> [--bundle-id <com.example.app>] [--dry-run]
+
+Examples:
+    python3 mac_uninstaller.py Motrix
+    python3 mac_uninstaller.py Motrix --bundle-id app.motrix.native
+    python3 mac_uninstaller.py Motrix --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+SEARCH_ROOTS = [
+    Path("/Applications"),
+    Path.home() / "Applications",
+    Path.home() / "Library",
+    Path("/Library"),
+    Path("/private/var/folders"),
+]
+
+SKIP_PATHS = [
+    Path.home() / "Downloads",
+    Path.home() / "Documents",
+    Path.home() / "Desktop",
+    Path.home() / "Movies",
+    Path.home() / "Music",
+    Path.home() / "Pictures",
+]
+
+
+def find_with_fd(keyword: str) -> list[Path]:
+    results: list[Path] = []
+    for root in SEARCH_ROOTS:
+        if not root.exists():
+            continue
+        try:
+            out = subprocess.run(
+                ["fd", "-i", "-u", keyword, str(root)],
+                capture_output=True,
+                text=True,
+            )
+            for line in out.stdout.splitlines():
+                p = Path(line.strip())
+                if any(str(p).startswith(str(skip)) for skip in SKIP_PATHS):
+                    continue
+                results.append(p)
+        except FileNotFoundError:
+            print("Error: 'fd' is not installed. Install via: brew install fd")
+            sys.exit(1)
+    return results
+
+
+def deduplicate(paths: list[Path]) -> list[Path]:
+    """Remove paths that are children of other paths in the list."""
+    sorted_paths = sorted(set(paths), key=lambda p: len(p.parts))
+    deduped: list[Path] = []
+    for p in sorted_paths:
+        if not any(str(p).startswith(str(kept) + os.sep) for kept in deduped):
+            deduped.append(p)
+    return deduped
+
+
+def remove(path: Path) -> tuple[bool, str]:
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return True, ""
+    except PermissionError:
+        return False, "Permission denied"
+    except Exception as e:
+        return False, str(e)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Clean uninstaller for macOS apps.")
+    parser.add_argument("app", help="App name to search for (e.g. Motrix)")
+    parser.add_argument("--bundle-id", help="Bundle ID prefix (e.g. app.motrix.native)")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be removed without deleting")
+    args = parser.parse_args()
+
+    keywords = [args.app]
+    if args.bundle_id:
+        keywords.append(args.bundle_id)
+
+    print(f"\nSearching for '{args.app}' files...\n")
+
+    found: list[Path] = []
+    for kw in keywords:
+        found.extend(find_with_fd(kw))
+
+    found = deduplicate(found)
+
+    if not found:
+        print("No files found. App may already be clean.")
+        return
+
+    print(f"Found {len(found)} item(s):\n")
+    for p in found:
+        tag = "[DIR] " if p.is_dir() else "[FILE]"
+        print(f"  {tag} {p}")
+
+    if args.dry_run:
+        print("\n[Dry run] No files were deleted.")
+        return
+
+    print()
+    confirm = input("Delete all of the above? [y/N] ").strip().lower()
+    if confirm != "y":
+        print("Aborted.")
+        return
+
+    print()
+    failed: list[tuple[Path, str]] = []
+    for p in found:
+        if not p.exists():
+            continue
+        ok, err = remove(p)
+        if ok:
+            print(f"  Removed: {p}")
+        else:
+            print(f"  FAILED:  {p} ({err})")
+            failed.append((p, err))
+
+    print()
+    if failed:
+        print(f"Done with {len(failed)} error(s). You may need sudo for system-level files.")
+    else:
+        print("Done. App fully removed.")
+
+
+if __name__ == "__main__":
+    main()
