@@ -153,13 +153,9 @@ def main() -> None:
     bundle_id = args.bundle_id or detect_bundle_id(args.app)
     if bundle_id:
         print(f"Bundle ID detected: {bundle_id}")
-        # Add the full bundle ID and its reverse-DNS prefix (e.g. "org.mozilla")
-        keywords.append(bundle_id)
-        parts = bundle_id.split(".")
-        if len(parts) >= 2:
-            prefix = ".".join(parts[:2])
-            if prefix not in keywords:
-                keywords.append(prefix)
+        # Search by full bundle ID only — avoid broad prefixes that match other apps
+        if bundle_id not in keywords:
+            keywords.append(bundle_id)
 
     print(f"\nSearching for '{args.app}' files...\n")
 
