@@ -7,7 +7,7 @@ Usage:
 
 Examples:
     python3 mac_uninstaller.py Motrix
-    python3 mac_uninstaller.py Motrix --bundle-id app.motrix.native
+    python3 mac_uninstaller.py Firefox --dry-run
     python3 mac_uninstaller.py Firefox --bundle-id org.mozilla.firefox --dry-run
 """
 
@@ -65,6 +65,23 @@ def is_inside_other_app(path: Path, keywords: list[str]) -> bool:
                 return False  # this .app is the target
             return True  # inside a different app (e.g. VS Code, Ghostty)
     return False
+
+
+def detect_bundle_id(app_name: str) -> str | None:
+    """Use mdls to auto-detect the bundle ID from the installed .app."""
+    for app_dir in (Path("/Applications"), HOME / "Applications"):
+        app_path = app_dir / f"{app_name}.app"
+        if app_path.exists():
+            out = subprocess.run(
+                ["mdls", "-name", "kMDItemCFBundleIdentifier", str(app_path)],
+                capture_output=True,
+                text=True,
+            )
+            for line in out.stdout.splitlines():
+                if "=" in line and "(null)" not in line:
+                    bundle_id = line.split("=", 1)[1].strip().strip('"')
+                    return bundle_id
+    return None
 
 
 def is_system_temp_artifact(path: Path) -> bool:
@@ -132,8 +149,17 @@ def main() -> None:
     args = parser.parse_args()
 
     keywords = [args.app]
-    if args.bundle_id:
-        keywords.append(args.bundle_id)
+
+    bundle_id = args.bundle_id or detect_bundle_id(args.app)
+    if bundle_id:
+        print(f"Bundle ID detected: {bundle_id}")
+        # Add the full bundle ID and its reverse-DNS prefix (e.g. "org.mozilla")
+        keywords.append(bundle_id)
+        parts = bundle_id.split(".")
+        if len(parts) >= 2:
+            prefix = ".".join(parts[:2])
+            if prefix not in keywords:
+                keywords.append(prefix)
 
     print(f"\nSearching for '{args.app}' files...\n")
 
