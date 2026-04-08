@@ -12,37 +12,49 @@ import time
 
 
 # ---------------------------------------------------------------------------
+# CoreFoundation — needed to create CFStringRef for IOKit
+# ---------------------------------------------------------------------------
+_cf = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+_cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+_cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+_cf.CFRelease.argtypes = [ctypes.c_void_p]
+_kCFStringEncodingUTF8 = 0x08000100
+
+
+def _cfstr(s: str) -> ctypes.c_void_p:
+    return _cf.CFStringCreateWithCString(None, s.encode(), _kCFStringEncodingUTF8)
+
+
+# ---------------------------------------------------------------------------
 # IOKit — replaces caffeinate entirely
 # ---------------------------------------------------------------------------
 _iokit = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/IOKit.framework/IOKit")
 _iokit.IOPMAssertionCreateWithName.restype = ctypes.c_uint32
 _iokit.IOPMAssertionCreateWithName.argtypes = [
-    ctypes.c_char_p,
-    ctypes.c_uint32,
-    ctypes.c_char_p,
+    ctypes.c_void_p,   # CFStringRef assertionType
+    ctypes.c_uint32,   # IOPMAssertionLevel
+    ctypes.c_void_p,   # CFStringRef name
     ctypes.POINTER(ctypes.c_uint32),
 ]
 _iokit.IOPMAssertionRelease.restype = ctypes.c_uint32
 _iokit.IOPMAssertionRelease.argtypes = [ctypes.c_uint32]
 
 _kIOPMAssertionLevelOn = 255
-
-# Prevents display sleep + lock screen triggered by user idle
-_kPreventUserIdleDisplaySleep = b"PreventUserIdleDisplaySleep"
-# Prevents system sleep triggered by user idle
-_kPreventUserIdleSystemSleep  = b"PreventUserIdleSystemSleep"
+_kPreventUserIdleDisplaySleep = "PreventUserIdleDisplaySleep"
+_kPreventUserIdleSystemSleep  = "PreventUserIdleSystemSleep"
 
 
-def _create_assertion(assertion_type: bytes, reason: str) -> ctypes.c_uint32:
+def _create_assertion(assertion_type: str, reason: str) -> ctypes.c_uint32:
     aid = ctypes.c_uint32(0)
+    cf_type   = _cfstr(assertion_type)
+    cf_reason = _cfstr(reason)
     ret = _iokit.IOPMAssertionCreateWithName(
-        assertion_type,
-        _kIOPMAssertionLevelOn,
-        reason.encode(),
-        ctypes.byref(aid),
+        cf_type, _kIOPMAssertionLevelOn, cf_reason, ctypes.byref(aid)
     )
+    _cf.CFRelease(cf_type)
+    _cf.CFRelease(cf_reason)
     if ret != 0:
-        print(f"Warning: IOKit assertion '{assertion_type.decode()}' failed (err={ret})")
+        print(f"Warning: IOKit assertion '{assertion_type}' failed (err={ret})")
     return aid
 
 
